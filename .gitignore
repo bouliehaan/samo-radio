@@ -1,0 +1,9 @@
+.DS_Store
+# The built binary at the repo root — anchored, or this also matches the
+# cmd/samo-radio/ DIRECTORY and quietly leaves main.go out of the repo.
+/samo-radio
+/samo-radio-linux-*
+dev-config.json
+
+# Local deploy convenience — hardcodes one particular home server.
+deploy.sh

@@ -1,0 +1,60 @@
+[Unit]
+Description=samo-radio — Samo playback device on the server's audio output
+Documentation=https://github.com/bouliehaan/samo-radio
+# The daemon does not need Samo to boot: it comes up, opens the sound card, and
+# retries the fallback channel until the server answers. Ordering is a
+# preference, not a requirement, so a slow-starting server never leaves the aux
+# port dead.
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=samo-radio
+Group=samo-radio
+# The one group that matters: without it the daemon cannot open /dev/snd/* and
+# every play command fails with "Permission denied" on a perfectly good card.
+SupplementaryGroups=audio
+
+# Creates and owns /var/lib/samo-radio, where config.json (server token,
+# control secret, chosen output device) lives.
+StateDirectory=samo-radio
+StateDirectoryMode=0750
+
+ExecStart=/usr/local/bin/samo-radio --config /var/lib/samo-radio/config.json
+
+# This is a radio. If it dies at 3am it should be playing again by 3:00:02.
+Restart=always
+RestartSec=2
+
+# Audio is soft-real-time: a scheduling delay long enough to starve the card is
+# an audible dropout. Nice + a small RT budget keeps the pump ahead of the
+# buffer on a box that is also transcoding channels and scanning a library.
+Nice=-10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=2
+
+# Hardening. The daemon reads config, talks HTTP to Samo, and writes PCM into
+# the sound card — nothing else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=no
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+# PrivateDevices would hide /dev/snd, which is the entire job.
+PrivateDevices=no
+DeviceAllow=char-alsa rw
+# AF_NETLINK is not optional despite nothing here speaking it directly:
+# glibc's getaddrinfo enumerates interfaces over netlink, so blocking it breaks
+# DNS for the ffmpeg children — which is how a channel containing an internet
+# station resolves its host.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
