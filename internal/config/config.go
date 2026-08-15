@@ -4,9 +4,12 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +22,20 @@ import (
 // and settings changes come in over the API, not from an operator with an
 // editor.
 const DefaultPath = "/var/lib/samo-radio/config.json"
+
+// DefaultListenAddr binds every interface.
+//
+// The device is not necessarily on the same machine as Samo. A Pi with an amp
+// on the other side of the house is the setup this daemon is for, and a
+// loopback-only default would make that box unreachable out of the box — the
+// first thing anyone did would be to SSH in and edit JSON, which is exactly
+// the errand this project exists to remove.
+//
+// What keeps it safe on a LAN is the control token, not the bind address: it
+// is required on every route, and the daemon mints one on first run rather
+// than leaving the choice to whoever installs it. Pin this back to
+// 127.0.0.1:7970 when Samo is on the same box and nothing else should reach it.
+const DefaultListenAddr = "0.0.0.0:7970"
 
 // Server is the Samo instance this device pulls audio from.
 type Server struct {
@@ -104,9 +121,7 @@ func Defaults() Config {
 	}
 	return Config{
 		DeviceName: name,
-		// Loopback by default. The control API is reached by samo-server, which
-		// runs on this same host; anything wider is an opt-in.
-		ListenAddr: "127.0.0.1:7970",
+		ListenAddr: DefaultListenAddr,
 		Output: Output{
 			Backend:      "auto",
 			SampleRate:   48000,
@@ -124,9 +139,7 @@ func (c *Config) normalize() {
 	if strings.TrimSpace(c.DeviceName) == "" {
 		c.DeviceName = Defaults().DeviceName
 	}
-	if strings.TrimSpace(c.ListenAddr) == "" {
-		c.ListenAddr = Defaults().ListenAddr
-	}
+	c.ListenAddr = normalizeListenAddr(c.ListenAddr)
 	if strings.TrimSpace(c.Output.Backend) == "" {
 		c.Output.Backend = "auto"
 	}
@@ -176,6 +189,83 @@ func (c *Config) normalize() {
 // Paired reports whether the device knows how to reach Samo.
 func (c Config) Paired() bool {
 	return c.Server.BaseURL != "" && strings.TrimSpace(c.Server.Token) != ""
+}
+
+// normalizeListenAddr accepts what a person actually types — "7970", ":7970",
+// "0.0.0.0:7970", "192.168.1.42:7970" — and settles on host:port.
+//
+// A bare port is the common case in a drop-in or an env var, and reading it as
+// a hostname would bind nothing at all.
+func normalizeListenAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	switch {
+	case addr == "":
+		return DefaultListenAddr
+	case !strings.Contains(addr, ":"):
+		return "0.0.0.0:" + addr
+	case strings.HasPrefix(addr, ":"):
+		return "0.0.0.0" + addr
+	default:
+		return addr
+	}
+}
+
+// LoopbackOnly reports whether the listen address is reachable from this
+// machine alone, which decides whether the daemon has anything to advertise.
+func (c Config) LoopbackOnly() bool {
+	host, _, err := net.SplitHostPort(c.ListenAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	if ip == nil {
+		// A hostname. Unresolvable here without a lookup, and "localhost" is
+		// the only one anybody means as loopback.
+		return strings.EqualFold(host, "localhost")
+	}
+	return ip.IsLoopback()
+}
+
+// EnsureControlToken mints the shared secret if the device does not have one,
+// and persists it.
+//
+// The daemon does this rather than the installer because the installer is not
+// the only way this ends up on a box: cloning the repo onto a Pi and running
+// the binary has to produce a device that is protected, not one that takes
+// orders from anything that can reach port 7970. Minting once and keeping it
+// means an upgrade never invalidates the token already pasted into Samo.
+func (s *Store) EnsureControlToken() (string, bool, error) {
+	if existing := strings.TrimSpace(s.Snapshot().ControlToken); existing != "" {
+		return existing, false, nil
+	}
+	var (
+		token   string
+		created bool
+	)
+	if _, err := s.Update(func(c *Config) error {
+		if existing := strings.TrimSpace(c.ControlToken); existing != "" {
+			token = existing
+			return nil
+		}
+		minted, err := newControlToken()
+		if err != nil {
+			return err
+		}
+		c.ControlToken = minted
+		token, created = minted, true
+		return nil
+	}); err != nil {
+		return "", false, err
+	}
+	return token, created, nil
+}
+
+func newControlToken() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate control token: %w", err)
+	}
+	return hex.EncodeToString(raw), nil
 }
 
 // Store is the concurrency-safe owner of the config file. The API mutates it

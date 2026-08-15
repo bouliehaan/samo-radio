@@ -1,10 +1,14 @@
 [Unit]
-Description=samo-radio — Samo playback device on the server's audio output
+Description=samo-radio — Samo playback device on this machine's audio output
 Documentation=https://github.com/bouliehaan/samo-radio
 # The daemon does not need Samo to boot: it comes up, opens the sound card, and
-# retries the fallback channel until the server answers. Ordering is a
-# preference, not a requirement, so a slow-starting server never leaves the aux
-# port dead.
+# retries the fallback station until the server answers. Ordering is a
+# preference, not a requirement, so a Samo on another machine — or one that is
+# still starting — never leaves the aux port dead.
+#
+# sound.target is likewise a preference. A USB DAC can enumerate after it fires,
+# in which case opening the card fails and Restart= below tries again every two
+# seconds until the hardware shows up.
 After=network-online.target sound.target
 Wants=network-online.target
 
@@ -29,7 +33,8 @@ RestartSec=2
 
 # Audio is soft-real-time: a scheduling delay long enough to starve the card is
 # an audible dropout. Nice + a small RT budget keeps the pump ahead of the
-# buffer on a box that is also transcoding channels and scanning a library.
+# buffer on a server that is also transcoding channels and scanning a library,
+# and on a Pi that has four slow cores and an ffmpeg using one of them.
 Nice=-10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=2

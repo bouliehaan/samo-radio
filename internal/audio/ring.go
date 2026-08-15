@@ -42,6 +42,22 @@ type Ring struct {
 	prefill   int
 	prefilled bool
 
+	// catchUp bounds the standing depth of a LIVE source, or is 0 for a source
+	// that must be played in full.
+	//
+	// Capacity is the jitter budget: how big a stall the ring can ride out. It
+	// is not meant to be where the stream permanently sits. But writer and
+	// reader here both run at exactly 1x — ffmpeg pulling a real-time stream,
+	// the sound card draining at a fixed rate — and nothing ever reads faster
+	// than real time, so a stall followed by ffmpeg's catch-up burst leaves the
+	// ring deeper than it started and it stays there. Depth only ratchets up.
+	//
+	// For live audio that is simply lateness, so past this depth the oldest
+	// audio is dropped and the stream rejoins where it is actually up to. For a
+	// file it would be a silently skipped chunk of a song, which is why this is
+	// off unless the caller says the source is live.
+	catchUp int
+
 	// frame is the PCM frame size, and reads are kept on that boundary.
 	//
 	// The writer is a pipe, so it delivers whatever byte count the kernel felt
@@ -93,8 +109,41 @@ func (r *Ring) Write(p []byte) (int, error) {
 		}
 		n := r.writeLocked(p[written:])
 		written += n
+		r.catchUpLocked()
 	}
 	return written, nil
+}
+
+// CatchUpAt bounds how far behind a live source may sit, in bytes. Zero (the
+// default) keeps the ring a strict backpressure buffer that drops nothing.
+func (r *Ring) CatchUpAt(bytes int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if bytes < 0 {
+		bytes = 0
+	}
+	r.catchUp = bytes
+}
+
+// catchUpLocked discards the oldest audio until the ring is back to catchUp.
+//
+// The drop is kept on a frame boundary. Moving the read cursor by a partial
+// frame is the byte-shift that turns S16 stereo into full-scale white noise
+// until the item ends — the same hazard ReadAvailable guards against.
+func (r *Ring) catchUpLocked() {
+	if r.catchUp <= 0 || r.length <= r.catchUp {
+		return
+	}
+	drop := r.length - r.catchUp
+	if r.frame > 1 {
+		drop -= drop % r.frame
+	}
+	if drop <= 0 {
+		return
+	}
+	r.start = (r.start + drop) % len(r.data)
+	r.length -= drop
+	r.space.Broadcast()
 }
 
 func (r *Ring) writeLocked(p []byte) int {

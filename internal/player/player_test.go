@@ -1,8 +1,12 @@
 package player
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +169,55 @@ func TestFallbackWithoutDefaultStationGoesIdle(t *testing.T) {
 	}
 	if mode != ModeIdle {
 		t.Fatalf("expected idle, got %s", mode)
+	}
+}
+
+// Pairing stores nothing it has not proved: the credentials have to work now,
+// while somebody is looking at the pairing screen.
+func TestPairStoresTheServerItCanReach(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer device-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer server.Close()
+
+	p := newTestPlayer(t, "")
+	if err := p.Pair(context.Background(), PairRequest{
+		ServerURL:  server.URL,
+		Token:      "device-token",
+		DeviceName: "Kitchen",
+		CallerHost: "127.0.0.1",
+	}); err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+
+	snapshot := p.config.Snapshot()
+	if !snapshot.Paired() || snapshot.Server.BaseURL != server.URL {
+		t.Fatalf("pairing was not stored: %+v", snapshot.Server)
+	}
+	if snapshot.DeviceName != "Kitchen" {
+		t.Fatalf("device name was not taken from the pairing: %q", snapshot.DeviceName)
+	}
+}
+
+// A device that cannot reach Samo must stay unpaired rather than store a URL
+// it will spend the next week failing to fetch audio from — and must say why
+// while there is still somebody to read it.
+func TestPairRejectsAServerItCannotReach(t *testing.T) {
+	p := newTestPlayer(t, "")
+	// Port 1 is nothing, on any machine: connection refused, immediately.
+	err := p.Pair(context.Background(), PairRequest{ServerURL: "http://127.0.0.1:1", Token: "device-token"})
+	if err == nil {
+		t.Fatal("pairing with an unreachable server must fail")
+	}
+	if !strings.Contains(err.Error(), "another machine") {
+		t.Fatalf("the error should point at the likeliest cause, got: %v", err)
+	}
+	if p.config.Snapshot().Paired() {
+		t.Fatal("a failed pairing must not be stored")
 	}
 }
 

@@ -2,9 +2,17 @@
 #
 # Install samo-radio as a systemd service on this machine.
 #
-# Run it on the box with the sound card — the same one running samo-server:
+# Run it on the box with the sound card. That can be the machine running
+# samo-server, or any other Linux box on the network — a Pi with speakers in
+# the kitchen is the same install:
 #
 #   sudo ./packaging/install.sh
+#
+# The device listens on every interface so Samo can reach it from wherever it
+# runs, and the control token it prints is what keeps that safe. To pin it to
+# loopback instead, on a box where Samo is a local process:
+#
+#   sudo LISTEN_ADDR=127.0.0.1:7970 ./packaging/install.sh
 #
 # It is idempotent: re-run it to upgrade the binary in place.
 set -euo pipefail
@@ -13,6 +21,7 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 STATE_DIR="${STATE_DIR:-/var/lib/samo-radio}"
 SERVICE_USER="${SERVICE_USER:-samo-radio}"
+LISTEN_ADDR="${LISTEN_ADDR:-0.0.0.0:7970}"
 UNIT_PATH="/etc/systemd/system/samo-radio.service"
 
 if [[ $EUID -ne 0 ]]; then
@@ -89,25 +98,32 @@ install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
 say "installing ${UNIT_PATH}"
 install -m 0644 "${REPO_DIR}/packaging/samo-radio.service" "$UNIT_PATH"
 
-# A control token means samo-server has to prove it is samo-server before it can
-# take over the speakers. Generated once and left alone on upgrades.
+# A control token means Samo has to prove it is Samo before it can take over
+# the speakers — and on a device that answers on the network, it is the only
+# thing that does. Seed just the listen address; the daemon fills in the rest of
+# the defaults and mints the token itself, so there is one generator rather than
+# two that could drift.
+#
+# Never overwritten: it holds the pairing credentials, the chosen sound card and
+# the default station, all of which survive an upgrade.
 CONFIG_FILE="${STATE_DIR}/config.json"
 if [[ ! -f "$CONFIG_FILE" ]]; then
-  TOKEN="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  cat >"$CONFIG_FILE" <<EOF
-{
-  "deviceName": "$(hostname)",
-  "listenAddr": "127.0.0.1:7970",
-  "controlToken": "${TOKEN}",
-  "server": { "baseUrl": "", "token": "" },
-  "output": { "backend": "auto", "device": "", "sampleRate": 48000, "channels": 2, "bufferMillis": 300 },
-  "volume": 1,
-  "autoTuneOnBoot": true
-}
-EOF
+  printf '{\n  "listenAddr": "%s"\n}\n' "$LISTEN_ADDR" >"$CONFIG_FILE"
   chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_FILE"
   chmod 0600 "$CONFIG_FILE"
+else
+  # An existing device keeps the address it was configured with, including a
+  # loopback one from an install that predates network-reachable devices. Read
+  # it back so what this script says afterwards is about the real thing.
+  EXISTING_ADDR="$(grep -o '"listenAddr": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4 || true)"
+  if [[ -n "$EXISTING_ADDR" ]]; then
+    LISTEN_ADDR="$EXISTING_ADDR"
+  fi
 fi
+
+# Mint the token before the service starts rather than after, so what this
+# script prints at the end is certain to be what the daemon is using.
+sudo -u "$SERVICE_USER" "${BIN_DIR}/samo-radio" --config "$CONFIG_FILE" --pairing >/dev/null
 
 systemctl daemon-reload
 # `enable --now` starts a stopped service but does NOTHING to a running one, so
@@ -138,16 +154,26 @@ sudo -u "$SERVICE_USER" "${BIN_DIR}/samo-radio" --config "$CONFIG_FILE" --unmute
 say "audio outputs visible to this machine:"
 sudo -u "$SERVICE_USER" "${BIN_DIR}/samo-radio" --config "$CONFIG_FILE" --devices || true
 
+say "samo-radio is running"
+printf '\n'
+# The daemon is the one that knows which addresses it actually answers on, so
+# it prints them rather than this script guessing from the config file.
+sudo -u "$SERVICE_USER" "${BIN_DIR}/samo-radio" --config "$CONFIG_FILE" --pairing
+
+# A headless box on DHCP is easier to reach by name than by address, and on a Pi
+# the name already works — Raspberry Pi OS ships avahi. Only mentioned when
+# something is actually answering for it.
+if systemctl is-active --quiet avahi-daemon 2>/dev/null; then
+  note "or by name: http://$(hostname).local:${LISTEN_ADDR##*:}"
+elif [[ "$LISTEN_ADDR" != 127.0.0.1:* ]]; then
+  note "for a name instead of an address: sudo apt-get install -y avahi-daemon"
+fi
+
 cat <<EOF
 
-$(say "samo-radio is running")
+  state file : $CONFIG_FILE
+  logs       : journalctl -u samo-radio -f
 
-  control API : http://$(grep -o '"listenAddr": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
-  control token: $(grep -o '"controlToken": *"[^"]*"' "$CONFIG_FILE" | cut -d'"' -f4)
-  state file  : $CONFIG_FILE
-  logs        : journalctl -u samo-radio -f
-
-Next: open Samo's web UI → RADIO → SAMO-RADIO → + ADD DEVICE, and paste the
-control token above. Pick the output device and a default channel there; you do
-not need to come back to this shell.
+Everything after this is done in Samo: pick the output device and a default
+station in the device's settings. You do not need to come back to this shell.
 EOF

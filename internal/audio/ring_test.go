@@ -238,3 +238,55 @@ func TestTheLastPartialFrameStillPlays(t *testing.T) {
 		t.Fatalf("the end of the item was truncated: read %d of 6 bytes", total)
 	}
 }
+
+// A live stream that falls behind must rejoin at the present, not play the
+// backlog late. Without CatchUpAt the depth stays wherever a stall left it,
+// which is standing lateness for the rest of the connection.
+func TestLiveRingCatchesUpInsteadOfStayingLate(t *testing.T) {
+	const frame = 4
+	ring := NewRing(4000, 0, frame)
+	ring.CatchUpAt(400)
+
+	for i := 0; i < 100; i++ {
+		chunk := make([]byte, 40)
+		for j := range chunk {
+			chunk[j] = byte(i)
+		}
+		if _, err := ring.Write(chunk); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+
+	if buffered := ring.Buffered(); buffered > 400 {
+		t.Fatalf("live ring sat %d bytes behind, want it trimmed to 400", buffered)
+	}
+	if buffered := ring.Buffered(); buffered%frame != 0 {
+		t.Fatalf("trimmed to %d bytes, which is not a whole number of frames", buffered)
+	}
+
+	// What survives is the newest audio.
+	out := make([]byte, 400)
+	n, _ := ring.ReadAvailable(out)
+	if n == 0 {
+		t.Fatal("expected the retained tail to be readable")
+	}
+	if got := out[n-1]; got != 99 {
+		t.Fatalf("rejoined at chunk %d, want the most recent chunk 99", got)
+	}
+}
+
+// A file must never be trimmed — that would silently skip part of a song.
+func TestNonLiveRingDropsNothing(t *testing.T) {
+	ring := NewRing(4000, 0, 4)
+	written := 0
+	for i := 0; i < 25; i++ {
+		chunk := make([]byte, 40)
+		if _, err := ring.Write(chunk); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		written += 40
+	}
+	if buffered := ring.Buffered(); buffered != written {
+		t.Fatalf("buffered %d of %d bytes; a non-live ring must drop nothing", buffered, written)
+	}
+}

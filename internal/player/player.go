@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -502,24 +503,53 @@ func (p *Player) SetVolume(volume float64) error {
 
 // ----- configuration ---------------------------------------------------
 
+// pairBudget is the total time pairing may spend proving it can reach Samo.
+//
+// Bounded for the same reason as transportCallTimeout: the request nests. Samo
+// gives this daemon six seconds to answer /v1/pair, so verification that took
+// longer would have Samo report a failure, revoke the token it just issued, and
+// leave the device holding a credential that no longer exists. Whatever
+// candidates there are share this budget.
+const pairBudget = 4 * time.Second
+
 // Pair stores server credentials and re-points the client at them.
-func (p *Player) Pair(ctx context.Context, baseURL, token, serverName, deviceName string) error {
-	client := samo.New(baseURL, token)
-	if !client.Paired() {
+//
+// It proves the credentials work before storing them — here, while somebody is
+// looking at the pairing screen, rather than silently at 3am when the device
+// tries to tune itself. Trying more than one address is part of that proof: see
+// PairRequest.CallerHost for why the address Samo hands over is not always one
+// this device can use.
+func (p *Player) Pair(ctx context.Context, req PairRequest) error {
+	candidates := serverURLCandidates(req.ServerURL, req.CallerHost)
+	if len(candidates) == 0 || strings.TrimSpace(req.Token) == "" {
 		return errors.New("server url and token are both required")
 	}
-	// Fail here, while somebody is looking at the pairing screen, rather than
-	// silently at 3am when the device tries to tune itself.
-	verifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := client.Verify(verifyCtx); err != nil {
-		return fmt.Errorf("could not authenticate with %s: %w", baseURL, err)
+	perAttempt := pairBudget / time.Duration(len(candidates))
+
+	var lastErr error
+	for _, candidate := range candidates {
+		client := samo.New(candidate, req.Token)
+		verifyCtx, cancel := context.WithTimeout(ctx, perAttempt)
+		err := client.Verify(verifyCtx)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if candidate != candidates[0] {
+			p.logger.Printf("samo is not on this machine: pairing with %s rather than %s", candidate, candidates[0])
+		}
+		return p.storePairing(client, candidate, req)
 	}
+	return pairFailure(candidates, lastErr)
+}
+
+func (p *Player) storePairing(client *samo.Client, baseURL string, req PairRequest) error {
 	if _, err := p.config.Update(func(c *config.Config) error {
 		c.Server.BaseURL = baseURL
-		c.Server.Token = token
-		c.Server.ServerName = strings.TrimSpace(serverName)
-		if name := strings.TrimSpace(deviceName); name != "" {
+		c.Server.Token = req.Token
+		c.Server.ServerName = strings.TrimSpace(req.ServerName)
+		if name := strings.TrimSpace(req.DeviceName); name != "" {
 			c.DeviceName = name
 		}
 		return nil
@@ -531,7 +561,28 @@ func (p *Player) Pair(ctx context.Context, baseURL, token, serverName, deviceNam
 	p.lastError = ""
 	p.bump()
 	p.mu.Unlock()
+	p.logger.Printf("paired with %s", baseURL)
 	return nil
+}
+
+// pairFailure says which addresses were tried, and names the likeliest cause
+// when a device off the server's own machine is told to fetch audio from
+// loopback — the one failure whose message would otherwise be a bare
+// "connection refused" against an address that looks perfectly fine.
+func pairFailure(candidates []string, err error) error {
+	if len(candidates) == 1 && isLoopbackHost(hostOf(candidates[0])) {
+		return fmt.Errorf("could not reach Samo at %s: %w — that address means this device itself, "+
+			"so if Samo is on another machine, pair with its address on the network", candidates[0], err)
+	}
+	return fmt.Errorf("could not authenticate with %s: %w", strings.Join(candidates, " or "), err)
+}
+
+func hostOf(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
 }
 
 // SetDefaultStation changes what the device falls back to.

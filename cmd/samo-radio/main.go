@@ -1,9 +1,13 @@
 // Command samo-radio is a headless Samo playback device.
 //
-// It sits next to samo-server on the same machine, holds the sound card open,
-// and plays whatever Samo tells it to — a programmed channel by default, or an
-// ad-hoc queue somebody sent from a phone. Think of it as a Chromecast that
-// only speaks Samo and outputs to the box's own line-out.
+// It holds the sound card open and plays whatever Samo tells it to — a
+// programmed channel by default, or an ad-hoc queue somebody sent from a phone.
+// Think of it as a Chromecast that only speaks Samo and outputs to the box's
+// own line-out.
+//
+// The box can be the one running samo-server, or any other Linux machine on the
+// network: a Pi with speakers in the kitchen is the same daemon with the same
+// config, reached over the LAN instead of over loopback.
 package main
 
 import (
@@ -24,6 +28,7 @@ import (
 func main() {
 	configPath := flag.String("config", envOr("SAMO_RADIO_CONFIG", config.DefaultPath), "path to config.json")
 	listDevices := flag.Bool("devices", false, "list audio output devices and exit")
+	showPairing := flag.Bool("pairing", false, "print what to type into Samo to add this device, then exit")
 	fixMixer := flag.Bool("unmute", false, "unmute and raise silenced mixer controls, then exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -51,6 +56,17 @@ func main() {
 		return
 	}
 
+	// `--pairing` answers the only question a fresh box raises: what do I type
+	// into Samo? On a device that is not the server, the address is not
+	// guessable and the token is not memorable, so both are printed here rather
+	// than left to be dug out of a JSON file over SSH.
+	if *showPairing {
+		if err := printPairing(store); err != nil {
+			logger.Fatalf("pairing: %v", err)
+		}
+		return
+	}
+
 	// A muted card is the single most common reason a fresh install plays
 	// "successfully" into silence, so the installer runs this. It only touches
 	// controls that are muted or at zero — a level somebody set is a decision.
@@ -59,6 +75,15 @@ func main() {
 			logger.Fatalf("mixer: %v", err)
 		}
 		return
+	}
+
+	// Before anything is served. The control token is the only thing standing
+	// between the speakers and the rest of the network, so a device that came
+	// up without one gets one now rather than serving unprotected until an
+	// operator notices.
+	token, minted, err := store.EnsureControlToken()
+	if err != nil {
+		logger.Fatalf("control token: %v", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -71,8 +96,24 @@ func main() {
 	defer func() { _ = engine.Close() }()
 
 	snapshot := store.Snapshot()
+	if minted {
+		// Logged on the boot that created it and never again: after this the
+		// secret stays out of the journal and `--pairing` is how to read it
+		// back. Said even on a paired device, because a token minted there is a
+		// token Samo does not have, and every command will be refused until it
+		// is pasted in again.
+		logger.Printf("control token: %s", token)
+	}
 	if !snapshot.Paired() {
-		logger.Printf("not paired with a Samo server yet — pair from the Samo UI (RADIO → SAMO-RADIO)")
+		// Everything needed to finish the setup, in the journal, on the box
+		// that has the problem. A device across the house is otherwise a
+		// guessing game of which address it landed on.
+		for _, endpoint := range httpapi.Endpoints(snapshot.ListenAddr) {
+			logger.Printf("not paired yet — add this device in Samo (RADIO → SAMO-RADIO) at %s", endpoint)
+		}
+		if !minted {
+			logger.Printf("run `samo-radio --pairing` to print the control token")
+		}
 	}
 
 	handler := httpapi.New(engine, store, logger)
@@ -115,6 +156,40 @@ func describeLeftAlone(control sink.MixerControl) string {
 		return "muted"
 	}
 	return "at 0%"
+}
+
+// printPairing prints the three things Samo's ADD DEVICE form asks for.
+func printPairing(store *config.Store) error {
+	// Minting here as well as at startup means this works on a box where the
+	// service has never run — the installer calls it before the first start.
+	token, _, err := store.EnsureControlToken()
+	if err != nil {
+		return err
+	}
+	snapshot := store.Snapshot()
+
+	fmt.Printf("device name  : %s\n", snapshot.DeviceName)
+	for index, endpoint := range httpapi.Endpoints(snapshot.ListenAddr) {
+		label := "control url  :"
+		if index > 0 {
+			label = "             :"
+		}
+		fmt.Printf("%s %s\n", label, endpoint)
+	}
+	fmt.Printf("control token: %s\n", token)
+
+	if snapshot.Paired() {
+		fmt.Printf("\nalready paired with %s\n", snapshot.Server.BaseURL)
+		return nil
+	}
+	fmt.Printf("\nIn Samo: RADIO → SAMO-RADIO → + ADD DEVICE, then paste the URL and token above.\n")
+	if snapshot.LoopbackOnly() {
+		// A deliberate choice, but worth saying out loud: from any other
+		// machine this device does not answer at all.
+		fmt.Printf("This device listens on %s, so only Samo running on this same machine can reach it.\n",
+			snapshot.ListenAddr)
+	}
+	return nil
 }
 
 func printDevices(store *config.Store) error {

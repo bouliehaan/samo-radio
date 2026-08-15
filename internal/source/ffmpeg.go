@@ -121,12 +121,23 @@ func Start(ctx context.Context, opts Options) (*Decoder, error) {
 		return nil, fmt.Errorf("start ffmpeg: %w", err)
 	}
 
+	ring := audio.NewRing(
+		format.BytesForDuration(bufferSeconds),
+		format.BytesForDuration(prefillSeconds),
+		format.BytesPerFrame(),
+	)
+	if opts.Live {
+		// A live stream that has fallen behind is late, not incomplete: the
+		// audio it missed went out while it was stalled and replaying it now
+		// would leave the station permanently that far behind the clock. Let it
+		// sit at twice the prefill cushion — enough headroom that ordinary
+		// jitter never trims, small enough that a scheduled cut-in is heard
+		// when the schedule says it happens. Capacity still absorbs the stall.
+		ring.CatchUpAt(format.BytesForDuration(prefillSeconds * 2))
+	}
+
 	decoder := &Decoder{
-		ring: audio.NewRing(
-			format.BytesForDuration(bufferSeconds),
-			format.BytesForDuration(prefillSeconds),
-			format.BytesPerFrame(),
-		),
+		ring:   ring,
 		cmd:    cmd,
 		stderr: stderr,
 		logger: logger,

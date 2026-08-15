@@ -1,10 +1,15 @@
 // Package httpapi is samo-radio's control surface.
 //
-// It binds to loopback by default because it is not meant to be a public API:
-// samo-server runs on the same host and is the only thing expected to call it.
-// Phones and browsers reach the device *through* Samo, which already has
-// accounts, tokens and a tunnel — this daemon has no business growing a second
-// version of any of that.
+// It is not a public API. samo-server is the only thing expected to call it —
+// phones and browsers reach the device *through* Samo, which already has
+// accounts, tokens and a tunnel, and this daemon has no business growing a
+// second version of any of that.
+//
+// What it cannot assume is that Samo is on the same machine. The device may be
+// a Pi in another room, so the API is reachable across the LAN and the control
+// token is the whole of the protection: every route below except health
+// requires it, and a device with no token configured serves nothing rather than
+// serving everyone.
 package httpapi
 
 import (
@@ -14,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -76,16 +82,26 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("PATCH /v1/settings", h.guard(h.settings))
 }
 
-// guard enforces the shared control secret when one is configured.
+// guard enforces the shared control secret, and fails closed without one.
+//
+// This used to wave requests through when no token was configured, which was
+// defensible while the API only ever answered on loopback. It is not defensible
+// on a device that ships listening to the LAN: an empty token would hand the
+// speakers to anything on the network. The daemon mints one at startup, so an
+// empty token here means somebody blanked it by hand, and refusing is both
+// safer and easier to diagnose than silently obeying strangers.
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		expected := strings.TrimSpace(h.config.Snapshot().ControlToken)
-		if expected != "" {
-			provided := bearerToken(r)
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
-				writeError(w, http.StatusUnauthorized, "invalid control token")
-				return
-			}
+		if expected == "" {
+			writeError(w, http.StatusServiceUnavailable,
+				"no control token configured — run samo-radio --pairing on the device to mint one")
+			return
+		}
+		provided := bearerToken(r)
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			writeError(w, http.StatusUnauthorized, "invalid control token")
+			return
 		}
 		next(w, r)
 	}
@@ -226,12 +242,43 @@ func (h *Handler) pair(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := h.player.Pair(r.Context(), body.ServerURL, body.Token, body.ServerName, body.DeviceName); err != nil {
+	if err := h.player.Pair(r.Context(), player.PairRequest{
+		ServerURL:  body.ServerURL,
+		Token:      body.Token,
+		ServerName: body.ServerName,
+		DeviceName: body.DeviceName,
+		// Where the request came from, which is how the device recovers when
+		// Samo tells it to fetch audio from a loopback address that means
+		// nothing here. See player.PairRequest.CallerHost.
+		CallerHost: callerHost(r),
+	}); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	h.logger.Printf("paired with %s", body.ServerURL)
 	writeJSON(w, http.StatusOK, h.player.State())
+}
+
+// callerHost is the peer address of a request, with the noise stripped.
+//
+// Only the TCP peer is trusted: X-Forwarded-For is a header anyone can write,
+// and this value is used to decide where the device fetches audio from.
+func callerHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err != nil {
+		host = strings.TrimSpace(r.RemoteAddr)
+	}
+	host = strings.Trim(host, "[]")
+	// An IPv6 zone ("fe80::1%eth0") is meaningful to this host and to nobody
+	// else, and would not survive being pasted into a URL.
+	host, _, _ = strings.Cut(host, "%")
+	// A server calling from an IPv4-mapped address (::ffff:192.168.1.10) is on
+	// the LAN at the plain address; the mapped form is not a URL host.
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return v4.String()
+		}
+	}
+	return host
 }
 
 type playRequest struct {
