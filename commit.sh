@@ -66,7 +66,10 @@ fi
 
 if [ "$SKIP_GATES" -eq 0 ]; then
   echo "==> Formatting..."
-  gofmt -l -w .
+  # -print0/-0 because a path with a space would otherwise split into two
+  # arguments and gofmt would fail on both halves.
+  find . -name '*.go' -not -path './.git/*' -not -path '*/node_modules/*' -print0 \
+    | xargs -0 gofmt -l -w
 
   echo "==> go vet"
   go vet ./...
