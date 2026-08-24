@@ -101,3 +101,62 @@ func TestConfigIsWrittenPrivate(t *testing.T) {
 		t.Fatalf("config mode is %04o, want 0600", mode)
 	}
 }
+
+// Mute has to survive being saved.
+//
+// normalize() runs on every write, and it used to turn a deliberate zero back
+// into 1. The sink was silenced but the config said 100%, so every client's
+// slider snapped to full on its next render — and the next openSink re-applied
+// the stored 1.0 and played a muted device at full volume.
+func TestMuteSurvivesAWrite(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Load(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	saved, err := store.Update(func(c *Config) error {
+		c.Volume = 0
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if saved.Volume != 0 {
+		t.Fatalf("a deliberate mute was rewritten to %v", saved.Volume)
+	}
+
+	// And it is still zero after a restart, rather than being re-defaulted on
+	// the way back in.
+	reloaded, err := Load(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.Snapshot().Volume; got != 0 {
+		t.Fatalf("mute did not survive a reload, got %v", got)
+	}
+}
+
+// A level nobody has ever set is still full volume — Load fills it from
+// Defaults(), which is the only place that can tell "absent" from "zero".
+func TestAnUnsetVolumeIsStillFull(t *testing.T) {
+	store, err := Load(filepath.Join(t.TempDir(), "config.json"))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := store.Snapshot().Volume; got != 1 {
+		t.Fatalf("a fresh config came up at %v, want 1", got)
+	}
+}
+
+// Out-of-range levels are still clamped; only the re-defaulting went away.
+func TestVolumeIsClamped(t *testing.T) {
+	for input, want := range map[float64]float64{-0.5: 0, 0: 0, 0.25: 0.25, 1: 1, 4: 1} {
+		c := Defaults()
+		c.Volume = input
+		c.normalize()
+		if c.Volume != want {
+			t.Fatalf("normalize volume %v = %v, want %v", input, c.Volume, want)
+		}
+	}
+}

@@ -70,11 +70,19 @@ type Item struct {
 // render it identically for both kinds; `Kind` is what tells them whether they
 // are looking at a Samo channel or an internet station.
 type ChannelState struct {
-	ID            string `json:"id"`
-	Kind          string `json:"kind,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Artist        string `json:"artist,omitempty"`
+	ID     string `json:"id"`
+	Kind   string `json:"kind,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Artist string `json:"artist,omitempty"`
+	// ArtworkURL pictures what is AIRING — the cover of the song a relayed
+	// station is playing, or that station's logo — rather than the channel's
+	// own tile. The daemon carries it and never fetches it: a box whose whole
+	// job is keeping a sound card fed has no business decoding JPEGs.
+	//
+	// Absolute when it is hosted elsewhere, otherwise a samo-relative path,
+	// which is why it reaches clients as a string rather than as bytes.
+	ArtworkURL    string `json:"artworkUrl,omitempty"`
 	SourceLabel   string `json:"sourceLabel,omitempty"`
 	ListenerCount int    `json:"listenerCount,omitempty"`
 }

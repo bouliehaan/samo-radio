@@ -923,6 +923,10 @@ func (p *Player) refreshChannelMetadata() {
 			next.Title = firstNonEmpty(station.NowPlaying.Title, station.NowPlaying.Raw)
 			next.Artist = station.NowPlaying.Artist
 		}
+		// The station's own picture. Nothing here knows the track, so this is
+		// the logo — which is the honest picture of a stream whose metadata is
+		// a single line of text.
+		next.ArtworkURL = firstNonEmpty(station.CoverURL, station.ImageURL)
 	default:
 		now, err := client.NowPlaying(ctx, tuned.ID)
 		if err != nil {
@@ -930,11 +934,18 @@ func (p *Player) refreshChannelMetadata() {
 		}
 		next.ListenerCount = now.ListenerCount
 		if now.Current != nil {
+			// Samo has already resolved this to what is actually airing —
+			// including for a channel relaying somebody else's station, where
+			// the title used to be the name of the block that chose it. The
+			// device reports what it is told; deciding any of this here would
+			// be a second implementation of the server's own answer.
 			next.Title = now.Current.Title
 			next.Artist = now.Current.Artist
+			next.ArtworkURL = now.Current.ArtworkURL
 			next.SourceLabel = now.Current.SourceLabel
 		} else {
 			next.Title, next.Artist, next.SourceLabel = "", "", ""
+			next.ArtworkURL = ""
 		}
 	}
 

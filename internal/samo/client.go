@@ -28,9 +28,13 @@ type Channel struct {
 
 // PlaybackItem is what a channel is currently emitting.
 type PlaybackItem struct {
-	Title           string `json:"title"`
-	Artist          string `json:"artist,omitempty"`
-	Kind            string `json:"kind,omitempty"`
+	Title  string `json:"title"`
+	Artist string `json:"artist,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	// ArtworkURL pictures what is airing. Absolute for anything hosted
+	// elsewhere, otherwise a samo-relative path for clients to join to the
+	// server's base URL — the device only carries it, it never fetches it.
+	ArtworkURL      string `json:"artworkUrl,omitempty"`
 	SourceLabel     string `json:"sourceLabel,omitempty"`
 	DurationSeconds int    `json:"durationSeconds,omitempty"`
 	Live            bool   `json:"live,omitempty"`
@@ -106,7 +110,11 @@ type InternetStation struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Enabled     bool   `json:"enabled"`
-	NowPlaying  *struct {
+	// CoverURL is a picture uploaded into samo; ImageURL is the logo the
+	// directory supplied. Preferring the first is what stationArtwork does.
+	CoverURL   string `json:"coverUrl,omitempty"`
+	ImageURL   string `json:"imageUrl,omitempty"`
+	NowPlaying *struct {
 		Title  string `json:"title,omitempty"`
 		Artist string `json:"artist,omitempty"`
 		Raw    string `json:"raw,omitempty"`

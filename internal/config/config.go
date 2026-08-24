@@ -152,8 +152,20 @@ func (c *Config) normalize() {
 	if c.Output.BufferMillis <= 0 {
 		c.Output.BufferMillis = 300
 	}
-	if c.Volume <= 0 {
-		c.Volume = 1
+	// Clamp, never re-default.
+	//
+	// normalize() runs on every write, so `<= 0 -> 1` here did not fill in a
+	// missing level, it overruled a deliberate one: setting the volume to zero
+	// persisted as 1.0, the sink really was silenced, and the daemon then
+	// reported 100% to everything that asked. Every client's next render
+	// snapped its slider to full, and the next openSink re-applied the stored
+	// 1.0 — so a deliberately muted device came back at full blast.
+	//
+	// An ABSENT volume key never needed this: Load starts from Defaults()
+	// (Volume: 1) and unmarshals over it, which is the one place that can tell
+	// "not set" from "set to zero".
+	if c.Volume < 0 {
+		c.Volume = 0
 	}
 	if c.Volume > 1 {
 		c.Volume = 1
