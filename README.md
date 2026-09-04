@@ -15,37 +15,62 @@ binary either way — the addresses are worked out during pairing, not configure
 
 ## Install
 
-Not a container: it needs the machine's real sound card, so it installs as a
-systemd service on the box with the speakers.
+Not a container: it needs the machine's real sound card, so it runs as a
+systemd service on the box with the speakers. Five commands, as root.
+
+Its dependencies first — `ffmpeg`, plus `alsa-utils` for the ALSA path or
+`pulseaudio-utils` if the box already runs PulseAudio/PipeWire:
 
 ```bash
-git clone https://github.com/bouliehaan/samo-radio.git
-cd samo-radio
-sudo ./packaging/install.sh
+sudo apt-get install -y ffmpeg alsa-utils
 ```
 
-That installs the binary to `/usr/local/bin`, creates a `samo-radio` system user
-in the `audio` group, writes `/var/lib/samo-radio/config.json`, and enables the
-unit. It ends by printing the three things samo needs: the device's name, the
-URLs it answers on, and its control token.
-
-It builds with the Go toolchain if there is one. If the box has no Go — a plain
-Pi OS install, say — drop a prebuilt binary in first and the installer uses it:
+The binary (`…-linux-amd64` on an x86 box):
 
 ```bash
-curl -fsSL -o samo-radio \
+sudo curl -fsSL -o /usr/local/bin/samo-radio \
   https://github.com/bouliehaan/samo-radio/releases/latest/download/samo-radio-linux-arm64
-chmod +x samo-radio      # then run the installer above
+sudo chmod +x /usr/local/bin/samo-radio
 ```
 
-`…-linux-amd64` for an x86 box. Requirements — `ffmpeg` and `alsa-utils`, or
-`pulseaudio-utils` for the Pulse path — are apt-getted for you if missing.
-
-The device listens on `0.0.0.0:7970` so samo can reach it from wherever it runs.
-Where samo is a local process and nothing else should be able to knock:
+An unprivileged account for it, in `audio` so it can open `/dev/snd`:
 
 ```bash
-sudo LISTEN_ADDR=127.0.0.1:7970 ./packaging/install.sh
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin samo-radio
+sudo usermod -aG audio samo-radio
+```
+
+The unit — it creates `/var/lib/samo-radio` itself, and the daemon writes its
+own config there on first start and mints its own control token:
+
+```bash
+sudo curl -fsSL -o /etc/systemd/system/samo-radio.service \
+  https://raw.githubusercontent.com/bouliehaan/samo-radio/main/packaging/samo-radio.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now samo-radio
+```
+
+Then read back the three things samo needs — the device's name, the URLs it
+answers on, and its control token:
+
+```bash
+sudo -u samo-radio samo-radio --pairing
+```
+
+To upgrade, replace the binary and `sudo systemctl restart samo-radio`. Write
+the new one beside the old and rename it (`curl -o /usr/local/bin/.samo-radio.new`
+then `mv -f`) — Linux refuses to open a running executable for writing, so
+downloading straight over the top fails with "Text file busy".
+
+The unit leaves the daemon listening on `0.0.0.0:7970`, so samo can reach it
+from wherever it runs. On a box where samo is a local process and nothing else
+should be able to knock, put `"listenAddr": "127.0.0.1:7970"` in
+`/var/lib/samo-radio/config.json` and restart.
+
+Building it yourself instead of taking the release binary:
+
+```bash
+CGO_ENABLED=0 go build -trimpath -o samo-radio ./cmd/samo-radio
 ```
 
 ## Pairing
