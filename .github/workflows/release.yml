@@ -67,6 +67,8 @@ jobs:
                           "$root/lib/systemd/system/samo-radio.service"
                       install -D -m 0644 README.md \
                           "$root/usr/share/doc/samo-radio/README.md"
+                      install -D -m 0644 packaging/debian/copyright \
+                          "$root/usr/share/doc/samo-radio/copyright"
 
                       install -d -m 0755 "$root/DEBIAN"
                       sed -e "s/@VERSION@/${VERSION}/" -e "s/@ARCH@/${arch}/" \
@@ -104,8 +106,18 @@ jobs:
                       | grep -qx "${{ steps.version.outputs.deb }}"
                   # The one that matters: it has to actually unpack and place
                   # the binary and the unit where the postinst expects them.
-                  dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb | tar -tf - | grep -q './usr/bin/samo-radio'
-                  dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb | tar -tf - | grep -q './lib/systemd/system/samo-radio.service'
+                  #
+                  # Listed into a variable rather than piped into `grep -q`:
+                  # grep exits on the first match, tar loses the pipe, and under
+                  # `pipefail` that fails the step even though the package is
+                  # perfectly good. That is what broke the first v1.1.0 run.
+                  contents="$(dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb | tar -tf -)"
+                  for path in ./usr/bin/samo-radio ./lib/systemd/system/samo-radio.service; do
+                      case "$contents" in
+                          *"$path"*) echo "contains $path" ;;
+                          *) echo "package is missing $path" >&2; exit 1 ;;
+                      esac
+                  done
 
             - name: Publish
               env:
