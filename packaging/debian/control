@@ -1,0 +1,16 @@
+Package: samo-radio
+Version: @VERSION@
+Architecture: @ARCH@
+Maintainer: bouliehaan <debus.jacob@gmail.com>
+Depends: ffmpeg, alsa-utils
+Recommends: avahi-daemon
+Section: sound
+Priority: optional
+Homepage: https://github.com/bouliehaan/samo-radio
+Description: samo playback device for a machine's audio output
+ Holds the sound card open and plays what samo-server tells it to, out of the
+ box's own line-out. Tunes a samo channel or an internet radio station and
+ stays there across reboots and network drops, and doubles as a cast target
+ for "play to samo-radio" from the phone or the web UI.
+ .
+ Pairs from samo: RADIO -> SAMO-RADIO -> ADD DEVICE.

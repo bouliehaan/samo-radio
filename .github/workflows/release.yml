@@ -1,0 +1,116 @@
+# Builds the install file people actually use: a .deb per architecture, plus
+# the bare binaries, attached to the release.
+#
+# samo-radio cannot be a container — it needs the host's real sound card — so
+# the package is the install path, the same way the other samo services are
+# `docker compose up`.
+
+name: Release
+
+on:
+    push:
+        tags: ['v*']
+    workflow_dispatch:
+        inputs:
+            tag:
+                description: Tag to build a release for
+                required: true
+
+permissions:
+    contents: write
+
+jobs:
+    gates:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: '1.26'
+            - run: make check
+
+    release:
+        needs: gates
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.inputs.tag || github.ref }}
+
+            - uses: actions/setup-go@v5
+              with:
+                  go-version: '1.26'
+
+            - name: Work out the version
+              id: version
+              run: |
+                  raw="${{ github.event.inputs.tag || github.ref_name }}"
+                  echo "tag=${raw}" >> "$GITHUB_OUTPUT"
+                  # Debian versions do not carry the leading v.
+                  echo "deb=${raw#v}" >> "$GITHUB_OUTPUT"
+
+            - name: Build binaries and packages
+              env:
+                  VERSION: ${{ steps.version.outputs.deb }}
+              run: |
+                  set -euo pipefail
+                  mkdir -p dist
+                  for arch in amd64 arm64; do
+                      CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
+                          go build -trimpath -ldflags "-s -w" \
+                          -o "dist/samo-radio-linux-$arch" ./cmd/samo-radio
+
+                      root="build/deb-$arch"
+                      rm -rf "$root"
+                      install -D -m 0755 "dist/samo-radio-linux-$arch" "$root/usr/bin/samo-radio"
+                      install -D -m 0644 packaging/samo-radio.service \
+                          "$root/lib/systemd/system/samo-radio.service"
+                      install -D -m 0644 README.md \
+                          "$root/usr/share/doc/samo-radio/README.md"
+
+                      install -d -m 0755 "$root/DEBIAN"
+                      sed -e "s/@VERSION@/${VERSION}/" -e "s/@ARCH@/${arch}/" \
+                          packaging/debian/control > "$root/DEBIAN/control"
+                      for script in postinst prerm postrm; do
+                          install -m 0755 "packaging/debian/$script" "$root/DEBIAN/$script"
+                      done
+
+                      # Unversioned filename on purpose: it makes
+                      # releases/latest/download/samo-radio_<arch>.deb a URL
+                      # that never goes stale, so the documented install is one
+                      # command forever. The real version lives in the control
+                      # file, which is what dpkg and apt actually read.
+                      dpkg-deb --build --root-owner-group "$root" \
+                          "dist/samo-radio_${arch}.deb"
+                  done
+                  ls -l dist/
+
+            - name: Check the packages are well formed
+              run: |
+                  set -euo pipefail
+                  sudo apt-get update -qq
+                  sudo apt-get install -y -qq lintian
+                  for deb in dist/*.deb; do
+                      dpkg-deb --info "$deb"
+                      dpkg-deb --contents "$deb"
+                      # Advisory: a personal-repo package is never going into
+                      # Debian, so style tags are noise. A hard failure here
+                      # would block releases on lintian's opinions.
+                      lintian --no-tag-display-limit "$deb" || true
+                  done
+                  # The version in the control file is the one that matters,
+                  # since the filename deliberately does not carry it.
+                  dpkg-deb --field dist/samo-radio_amd64.deb Version \
+                      | grep -qx "${{ steps.version.outputs.deb }}"
+                  # The one that matters: it has to actually unpack and place
+                  # the binary and the unit where the postinst expects them.
+                  dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb | tar -tf - | grep -q './usr/bin/samo-radio'
+                  dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb | tar -tf - | grep -q './lib/systemd/system/samo-radio.service'
+
+            - name: Publish
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  gh release upload "${{ steps.version.outputs.tag }}" dist/* --clobber \
+                      || gh release create "${{ steps.version.outputs.tag }}" dist/* \
+                           --title "samo-radio ${{ steps.version.outputs.tag }}" --generate-notes

@@ -1,0 +1,45 @@
+#!/bin/sh
+# Package maintainer script. dpkg runs this; it is not something you invoke.
+set -e
+
+case "$1" in
+    configure)
+        # An unprivileged account that owns nothing but its state directory.
+        # The `audio` group is what grants /dev/snd; without it every play
+        # command fails with "Permission denied" on a perfectly good card.
+        # The unit declares StateDirectory, but creating it here too means
+        # `samo-radio --pairing` works before the service has ever started.
+        # Before adduser, so it does not warn about an unreachable home.
+        install -d -m 0750 /var/lib/samo-radio
+
+        if ! getent passwd samo-radio >/dev/null; then
+            adduser --system --group --no-create-home \
+                    --home /var/lib/samo-radio \
+                    --shell /usr/sbin/nologin samo-radio
+        fi
+        if getent group audio >/dev/null; then
+            usermod -aG audio samo-radio
+        fi
+        chown samo-radio:samo-radio /var/lib/samo-radio
+
+        # The card's own mixer can be muted or zeroed, which is invisible to
+        # the daemon: it will report "playing" with the position advancing and
+        # no sound. Deliberately narrow about what it touches — see the README.
+        samo-radio --unmute >/dev/null 2>&1 || true
+
+        deb-systemd-helper unmask samo-radio.service >/dev/null 2>&1 || true
+        if deb-systemd-helper --quiet was-enabled samo-radio.service; then
+            deb-systemd-helper enable samo-radio.service >/dev/null 2>&1 || true
+        else
+            deb-systemd-helper update-state samo-radio.service >/dev/null 2>&1 || true
+            systemctl --system enable samo-radio.service >/dev/null 2>&1 || true
+        fi
+        systemctl --system daemon-reload >/dev/null 2>&1 || true
+        # restart, not start: on an upgrade the old binary is still running and
+        # `start` does nothing to a running unit, so the new one would sit on
+        # disk unused until the next reboot.
+        systemctl --system restart samo-radio.service >/dev/null 2>&1 || true
+        ;;
+esac
+
+exit 0

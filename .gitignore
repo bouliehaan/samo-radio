@@ -7,3 +7,5 @@ dev-config.json
 
 # Local deploy convenience — hardcodes one particular home server.
 deploy.sh
+dist/
+build/

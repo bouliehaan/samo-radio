@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    purge)
+        # Only on purge, never on remove: config.json holds the pairing
+        # credentials, the chosen sound card and the default station, all of
+        # which should survive reinstalling the package.
+        rm -rf /var/lib/samo-radio
+        deb-systemd-helper purge samo-radio.service >/dev/null 2>&1 || true
+        deb-systemd-helper unmask samo-radio.service >/dev/null 2>&1 || true
+        if getent passwd samo-radio >/dev/null; then
+            deluser --system samo-radio >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+systemctl --system daemon-reload >/dev/null 2>&1 || true
+exit 0
