@@ -1,7 +1,7 @@
 BINARY := samo-radio
 GO ?= go
 
-.PHONY: build build-linux build-pi test vet fmt check clean devices pairing run
+.PHONY: build build-linux build-pi test vet fmt check clean install devices pairing run
 
 ## build: static binary for this machine
 build:
@@ -30,6 +30,10 @@ fmt:
 check: vet test
 	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
 	@echo "ok"
+
+## install: build + install the systemd service (run on the box with the speakers, as root)
+install:
+	sudo ./packaging/install.sh
 
 ## devices: list the audio outputs this machine can play to
 devices: build
