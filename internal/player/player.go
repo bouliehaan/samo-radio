@@ -571,8 +571,8 @@ func (p *Player) storePairing(client *samo.Client, baseURL string, req PairReque
 // "connection refused" against an address that looks perfectly fine.
 func pairFailure(candidates []string, err error) error {
 	if len(candidates) == 1 && isLoopbackHost(hostOf(candidates[0])) {
-		return fmt.Errorf("could not reach Samo at %s: %w — that address means this device itself, "+
-			"so if Samo is on another machine, pair with its address on the network", candidates[0], err)
+		return fmt.Errorf("could not reach samo at %s: %w — that address means this device itself, "+
+			"so if samo is on another machine, pair with its address on the network", candidates[0], err)
 	}
 	return fmt.Errorf("could not authenticate with %s: %w", strings.Join(candidates, " or "), err)
 }

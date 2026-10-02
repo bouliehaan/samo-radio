@@ -16,18 +16,18 @@ binary either way — the addresses are worked out during pairing, not configure
 ## Install
 
 On the box with the speakers — the samo-server machine, a Pi, anything Debian
-or Ubuntu. `arm64` for a 64-bit Pi, `amd64` for an x86 box:
+or Ubuntu, 64-bit ARM or x86. One line; it picks the right package for the
+machine it runs on:
 
 ```bash
-curl -fsSLO https://github.com/bouliehaan/samo-radio/releases/latest/download/samo-radio_arm64.deb
-sudo apt install ./samo-radio_arm64.deb
+curl -fsSLo /tmp/samo-radio.deb https://github.com/bouliehaan/samo-radio/releases/latest/download/samo-radio_$(dpkg --print-architecture).deb && sudo apt install -y /tmp/samo-radio.deb
 ```
 
 That is the whole install. The package pulls in `ffmpeg` and `alsa-utils`,
 creates an unprivileged `samo-radio` account in the `audio` group, installs and
-starts the systemd unit, and mints the device's control token on first start.
-Upgrading is the same two commands; `apt remove` leaves your pairing and chosen
-output alone, `apt purge` takes them with it.
+starts the systemd unit, mints the device's control token on first start, and
+tells you whether it came up. Upgrading is the same line; `apt remove` leaves
+your pairing and chosen output alone, `apt purge` takes them with it.
 
 It is not a container, because it needs the machine's real sound card.
 
@@ -36,8 +36,8 @@ configure on this box.
 
 ## Pairing
 
-In samo: **RADIO → SAMO-RADIO → + ADD DEVICE**. It wants a name, the device's
-control URL and the control token. To print all three:
+In samo: **Radio → + Add device**. It wants a name, the device's control URL
+and the control token. To print all three:
 
 ```bash
 sudo samo-radio --pairing

@@ -12,8 +12,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/signal"
@@ -28,7 +30,7 @@ import (
 func main() {
 	configPath := flag.String("config", envOr("SAMO_RADIO_CONFIG", config.DefaultPath), "path to config.json")
 	listDevices := flag.Bool("devices", false, "list audio output devices and exit")
-	showPairing := flag.Bool("pairing", false, "print what to type into Samo to add this device, then exit")
+	showPairing := flag.Bool("pairing", false, "print what to type into samo to add this device, then exit")
 	fixMixer := flag.Bool("unmute", false, "unmute and raise silenced mixer controls, then exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
@@ -42,6 +44,14 @@ func main() {
 	}
 
 	store, err := config.Load(*configPath)
+	if err != nil && *listDevices && errors.Is(err, fs.ErrPermission) {
+		// The config is the service account's and mode 0600, so a plain shell
+		// cannot read it — and listing the cards needs nothing from it but the
+		// backend choice. Fall back to the defaults (auto) rather than making
+		// "what is my sound card called?" a sudo question.
+		logger.Printf("cannot read %s; listing with the default backend", *configPath)
+		store, err = config.Ephemeral(), nil
+	}
 	if err != nil {
 		logger.Fatalf("config: %v", err)
 	}
@@ -109,7 +119,7 @@ func main() {
 		// that has the problem. A device across the house is otherwise a
 		// guessing game of which address it landed on.
 		for _, endpoint := range httpapi.Endpoints(snapshot.ListenAddr) {
-			logger.Printf("not paired yet — add this device in Samo (RADIO → SAMO-RADIO) at %s", endpoint)
+			logger.Printf("not paired yet — add this device in samo (Radio → + Add device) at %s", endpoint)
 		}
 		if !minted {
 			logger.Printf("run `samo-radio --pairing` to print the control token")
@@ -182,11 +192,11 @@ func printPairing(store *config.Store) error {
 		fmt.Printf("\nalready paired with %s\n", snapshot.Server.BaseURL)
 		return nil
 	}
-	fmt.Printf("\nIn Samo: RADIO → SAMO-RADIO → + ADD DEVICE, then paste the URL and token above.\n")
+	fmt.Printf("\nIn samo: Radio → + Add device, then paste the URL and token above.\n")
 	if snapshot.LoopbackOnly() {
 		// A deliberate choice, but worth saying out loud: from any other
 		// machine this device does not answer at all.
-		fmt.Printf("This device listens on %s, so only Samo running on this same machine can reach it.\n",
+		fmt.Printf("This device listens on %s, so only samo running on this same machine can reach it.\n",
 			snapshot.ListenAddr)
 	}
 	return nil

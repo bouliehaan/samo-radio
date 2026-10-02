@@ -8,9 +8,9 @@
 #
 #   sudo ./packaging/install.sh
 #
-# The device listens on every interface so Samo can reach it from wherever it
+# The device listens on every interface so samo can reach it from wherever it
 # runs, and the control token it prints is what keeps that safe. To pin it to
-# loopback instead, on a box where Samo is a local process:
+# loopback instead, on a box where samo is a local process:
 #
 #   sudo LISTEN_ADDR=127.0.0.1:7970 ./packaging/install.sh
 #
@@ -96,9 +96,14 @@ mv -f "${BIN_DIR}/.samo-radio.new" "${BIN_DIR}/samo-radio"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
 
 say "installing ${UNIT_PATH}"
-install -m 0644 "${REPO_DIR}/packaging/samo-radio.service" "$UNIT_PATH"
+# The unit names /usr/bin/samo-radio, which is where the .deb puts it. This
+# script installs to $BIN_DIR, so point the unit at that copy — a unit naming a
+# path nothing installed is a service that never starts (203/EXEC).
+sed "s|/usr/bin/samo-radio|${BIN_DIR}/samo-radio|" "${REPO_DIR}/packaging/samo-radio.service" >"${UNIT_PATH}.new"
+install -m 0644 "${UNIT_PATH}.new" "$UNIT_PATH"
+rm -f "${UNIT_PATH}.new"
 
-# A control token means Samo has to prove it is Samo before it can take over
+# A control token means samo has to prove it is samo before it can take over
 # the speakers — and on a device that answers on the network, it is the only
 # thing that does. Seed just the listen address; the daemon fills in the rest of
 # the defaults and mints the token itself, so there is one generator rather than
@@ -174,6 +179,6 @@ cat <<EOF
   state file : $CONFIG_FILE
   logs       : journalctl -u samo-radio -f
 
-Everything after this is done in Samo: pick the output device and a default
+Everything after this is done in samo: pick the output device and a default
 station in the device's settings. You do not need to come back to this shell.
 EOF

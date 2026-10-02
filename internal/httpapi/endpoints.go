@@ -49,9 +49,12 @@ func endpointsFor(addr string, candidates []net.IP) []string {
 
 // interfaceIPs returns the addresses another machine could plausibly use.
 //
-// IPv4 only, and no loopback: the point is what to paste into Samo running
+// IPv4 only, and no loopback: the point is what to paste into samo running
 // somewhere else. Link-local addresses (169.254/16, fe80::) are dropped for the
-// same reason — an interface that failed to get a lease is not a way in.
+// same reason — an interface that failed to get a lease is not a way in. So are
+// container and VM bridges: the samo-server box runs Docker, and docker0's
+// 172.17.0.1 sorts ahead of the LAN address, so it was the first URL printed —
+// one that means nothing from any other machine.
 func interfaceIPs() []net.IP {
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -59,7 +62,7 @@ func interfaceIPs() []net.IP {
 	}
 	var found []net.IP
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || virtualBridge(iface.Name) {
 			continue
 		}
 		addrs, err := iface.Addrs()
@@ -83,4 +86,15 @@ func interfaceIPs() []net.IP {
 		}
 	}
 	return found
+}
+
+// virtualBridge reports whether an interface belongs to a container runtime or
+// a local hypervisor rather than to the network the box sits on.
+func virtualBridge(name string) bool {
+	for _, prefix := range []string{"docker", "br-", "veth", "virbr", "cni", "podman", "lxc", "lxd", "flannel", "cali", "vxlan"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }

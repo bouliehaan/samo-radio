@@ -69,7 +69,7 @@ func New(baseURL, token string) *Client {
 }
 
 // ErrUnpaired means the device has no server to talk to yet.
-var ErrUnpaired = fmt.Errorf("device is not paired with a Samo server")
+var ErrUnpaired = fmt.Errorf("device is not paired with a samo server")
 
 // BaseURL is the configured server root.
 func (c *Client) BaseURL() string { return c.baseURL }

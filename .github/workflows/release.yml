@@ -57,7 +57,7 @@ jobs:
                   mkdir -p dist
                   for arch in amd64 arm64; do
                       CGO_ENABLED=0 GOOS=linux GOARCH="$arch" \
-                          go build -trimpath -ldflags "-s -w" \
+                          go build -trimpath -ldflags "-s -w -X github.com/bouliehaan/samo-radio/internal/httpapi.Version=${VERSION}" \
                           -o "dist/samo-radio-linux-$arch" ./cmd/samo-radio
 
                       root="build/deb-$arch"
@@ -118,6 +118,32 @@ jobs:
                           *) echo "package is missing $path" >&2; exit 1 ;;
                       esac
                   done
+                  # The unit has to run the binary this package ships. v1.1.0
+                  # shipped /usr/bin/samo-radio with a unit naming
+                  # /usr/local/bin/samo-radio (install.sh's path), and every
+                  # fresh install sat in a 203/EXEC restart loop.
+                  unit_bin="$(dpkg-deb --fsys-tarfile dist/samo-radio_amd64.deb \
+                      | tar -xOf - ./lib/systemd/system/samo-radio.service \
+                      | sed -n 's/^ExecStart=\([^ ]*\).*/\1/p')"
+                  case "$contents" in
+                      *".$unit_bin"*) echo "unit runs $unit_bin, which the package ships" ;;
+                      *) echo "unit runs $unit_bin, which the package does not ship" >&2; exit 1 ;;
+                  esac
+
+            # Install it the way the README says and require the service to
+            # answer. Everything above checks the archive; this checks the
+            # install. The runner has no sound card, which is fine: the control
+            # API is up before the first play command ever touches one.
+            - name: Install and start
+              run: |
+                  sudo apt-get install -y -qq ./dist/samo-radio_amd64.deb
+                  for _ in $(seq 1 20); do
+                      if curl -fsS http://127.0.0.1:7970/v1/health; then exit 0; fi
+                      sleep 1
+                  done
+                  systemctl status samo-radio --no-pager || true
+                  journalctl -u samo-radio --no-pager | tail -40
+                  exit 1
 
             - name: Publish
               env:

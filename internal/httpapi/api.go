@@ -32,7 +32,9 @@ import (
 
 // Version is reported by /v1/health so the server can tell what it is talking
 // to without a separate handshake.
-const Version = "1.0.0"
+// Version is stamped at build time from the release tag (see release.yml);
+// "dev" is a build from a working tree.
+var Version = "dev"
 
 // Handler serves the control API.
 type Handler struct {

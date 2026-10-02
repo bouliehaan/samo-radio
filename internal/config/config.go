@@ -316,6 +316,16 @@ func Load(path string) (*Store, error) {
 	return store, nil
 }
 
+// Ephemeral is the defaults plus environment overrides, backed by no file. It
+// is for read-only command-line paths run from a shell that cannot read the
+// service's own config, which is mode 0600 and owned by the service account.
+func Ephemeral() *Store {
+	value := Defaults()
+	applyEnv(&value)
+	value.normalize()
+	return &Store{value: value}
+}
+
 func applyEnv(c *Config) {
 	if v := strings.TrimSpace(os.Getenv("SAMO_RADIO_NAME")); v != "" {
 		c.DeviceName = v
@@ -388,8 +398,12 @@ func write(path string, value Config) error {
 	}
 	encoded = append(encoded, '\n')
 	temp := path + ".tmp"
-	// 0600: this file holds a Samo API token and the control secret.
+	// 0600: this file holds a samo API token and the control secret.
 	if err := os.WriteFile(temp, encoded, 0o600); err != nil {
+		return err
+	}
+	if err := matchDirOwner(temp); err != nil {
+		os.Remove(temp)
 		return err
 	}
 	return os.Rename(temp, path)

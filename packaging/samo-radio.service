@@ -1,9 +1,9 @@
 [Unit]
-Description=samo-radio — Samo playback device on this machine's audio output
+Description=samo-radio — samo playback device on this machine's audio output
 Documentation=https://github.com/bouliehaan/samo-radio
-# The daemon does not need Samo to boot: it comes up, opens the sound card, and
+# The daemon does not need samo to boot: it comes up, opens the sound card, and
 # retries the fallback station until the server answers. Ordering is a
-# preference, not a requirement, so a Samo on another machine — or one that is
+# preference, not a requirement, so a samo on another machine — or one that is
 # still starting — never leaves the aux port dead.
 #
 # sound.target is likewise a preference. A USB DAC can enumerate after it fires,
@@ -25,7 +25,7 @@ SupplementaryGroups=audio
 StateDirectory=samo-radio
 StateDirectoryMode=0750
 
-ExecStart=/usr/local/bin/samo-radio --config /var/lib/samo-radio/config.json
+ExecStart=/usr/bin/samo-radio --config /var/lib/samo-radio/config.json
 
 # This is a radio. If it dies at 3am it should be playing again by 3:00:02.
 Restart=always
@@ -39,7 +39,7 @@ Nice=-10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=2
 
-# Hardening. The daemon reads config, talks HTTP to Samo, and writes PCM into
+# Hardening. The daemon reads config, talks HTTP to samo, and writes PCM into
 # the sound card — nothing else.
 NoNewPrivileges=yes
 PrivateTmp=yes

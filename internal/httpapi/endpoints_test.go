@@ -39,3 +39,16 @@ func TestEndpointsPassesThroughSomethingUnparseable(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestVirtualBridgesAreNotPairingAddresses(t *testing.T) {
+	for _, name := range []string{"docker0", "br-3f2a9c1d", "veth12ab", "virbr0", "cni0", "podman0", "lxcbr0"} {
+		if !virtualBridge(name) {
+			t.Errorf("%s should be skipped", name)
+		}
+	}
+	for _, name := range []string{"eth0", "enp3s0", "wlan0", "wlp2s0", "end0", "eno1", "tailscale0"} {
+		if virtualBridge(name) {
+			t.Errorf("%s is a real network and must be listed", name)
+		}
+	}
+}

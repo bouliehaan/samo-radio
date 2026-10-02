@@ -20,7 +20,11 @@ case "$1" in
         if getent group audio >/dev/null; then
             usermod -aG audio samo-radio
         fi
-        chown samo-radio:samo-radio /var/lib/samo-radio
+        # -R: 1.1.0's README had people run `sudo samo-radio --pairing`, which
+        # wrote config.json as root, mode 0600, and the service could no longer
+        # read its own config. Handing the directory's contents back repairs a
+        # box that was set up that way.
+        chown -R samo-radio:samo-radio /var/lib/samo-radio
 
         # The card's own mixer can be muted or zeroed, which is invisible to
         # the daemon: it will report "playing" with the position advancing and
@@ -39,6 +43,24 @@ case "$1" in
         # `start` does nothing to a running unit, so the new one would sit on
         # disk unused until the next reboot.
         systemctl --system restart samo-radio.service >/dev/null 2>&1 || true
+
+        # Say whether it actually came up. apt reports success either way, and
+        # a unit that cannot start looks exactly like a working install until
+        # somebody tries to pair it. Only where systemd is running: a chroot or
+        # an image build has nothing to report on.
+        if [ -d /run/systemd/system ]; then
+            up=""
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+                if systemctl --quiet is-active samo-radio.service; then up=1; break; fi
+                sleep 0.5
+            done
+            if [ -n "$up" ]; then
+                echo "samo-radio is running. Pair it in samo: Radio -> + Add device."
+                echo "The address and token to paste: sudo samo-radio --pairing"
+            else
+                echo "samo-radio did not start. What it said: journalctl -u samo-radio -e" >&2
+            fi
+        fi
         ;;
 esac
 

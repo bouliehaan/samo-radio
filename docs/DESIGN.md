@@ -27,13 +27,13 @@ Why the daemon is shaped the way it is. For installing and running it, see the
 ```
 
 Clients never talk to this daemon directly. samo-server proxies every command,
-so control works from anywhere Samo works — including through a tunnel — and
+so control works from anywhere samo works — including through a tunnel — and
 this process never has to grow its own accounts, sessions or TLS.
 
 Both of the arrows crossing to the right-hand column may be loopback or may be
 the network; nothing in the daemon cares which. Note that they point in opposite
-directions and carry different credentials: Samo proves itself to the device
-with the **control token**, and the device proves itself to Samo with its own
+directions and carry different credentials: samo proves itself to the device
+with the **control token**, and the device proves itself to samo with its own
 **device token**, minted during pairing.
 
 ## Design notes
@@ -53,20 +53,20 @@ time. There are no timers in the audio path.
 block (an empty ring is a silent frame, not a stalled card). A network hiccup
 becomes a recoverable gap instead of a dropout.
 
-**The daemon knows nothing about Samo's catalog.** samo-server resolves every
+**The daemon knows nothing about samo's catalog.** samo-server resolves every
 item to an absolute stream URL before sending it. The one exception is the
 fallback station, whose URL the daemon builds itself — it has to be able to tune
 that with nobody around to ask. That is the only reason it knows a station has
 two kinds: a channel is `/channels/{id}/stream`, an internet station is
 `/internet-radio/{id}/stream`, and everything after that is identical.
 
-**The Samo token only goes to Samo.** A channel can contain a third-party
+**The samo token only goes to samo.** A channel can contain a third-party
 internet station, so the Authorization header is attached by URL prefix, never
 blanket-applied.
 
 **The control token is the whole of the door.** The API answers on every
 interface, because a device that only answered on its own loopback would be one
-nobody could add unless Samo happened to be on the same box. What makes that
+nobody could add unless samo happened to be on the same box. What makes that
 safe is the token: every route but `/v1/health` requires it, and a device with
 no token configured refuses to serve rather than serving whoever asks. The
 daemon mints one on first start, so there is no window in which a box is up and
@@ -74,24 +74,24 @@ unprotected.
 
 It is a shared secret over plain HTTP, which is the right size for what it
 protects — the speakers in your kitchen, on your own network. It is not a
-credential to expose to the internet: keep the device on the LAN and let Samo,
+credential to expose to the internet: keep the device on the LAN and let samo,
 which has accounts and TLS and a tunnel, be the thing that faces outward.
 
-**The device works out where Samo is, if Samo gets it wrong.** Samo tells the
+**The device works out where samo is, if samo gets it wrong.** samo tells the
 device what URL to fetch audio from, and defaults to its own loopback address —
 correct when the two are on one machine, useless on a Pi across the house. The
 device is the end that can tell the difference: a pairing request that arrived
-from `192.168.1.10` came from a Samo at `192.168.1.10`, whatever the body says.
+from `192.168.1.10` came from a samo at `192.168.1.10`, whatever the body says.
 So the supplied URL is tried first, and if it does not answer, the address the
 request actually came from is tried instead. That address is the TCP peer of an
 already-authenticated request, so trusting it is no weaker than trusting the
 body it arrived in.
 
 Pairing proves the credentials work before storing them, and the whole
-verification is bounded well under the six seconds Samo allows for the call —
-otherwise Samo gives up first and revokes a token the device has already saved.
+verification is bounded well under the six seconds samo allows for the call —
+otherwise samo gives up first and revokes a token the device has already saved.
 
-**Samo decides levels; the daemon only applies them.** An item can carry a
+**samo decides levels; the daemon only applies them.** An item can carry a
 `gainDb` — a constant offset in decibels that makes a podcast and a pop master
 come out of the aux port at the same perceived volume. It is applied in the
 decode chain as `volume=NdB`, which is one multiplication over every sample, so
