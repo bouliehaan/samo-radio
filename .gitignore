@@ -14,3 +14,5 @@ build/
 # the gate before anything goes public. They live on my machine, not in the
 # repo — nobody cloning this can use them.
 *.sh
+# Except the installer, which is for everyone: `make install` runs it.
+!packaging/install.sh
